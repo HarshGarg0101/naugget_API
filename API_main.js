@@ -1,15 +1,32 @@
 const express = require('express');
 const router = express.Router();
+const jwt = require('jsonwebtoken');
 const User = require('../models/user');
 const WalletTransaction = require('../models/walletTransaction');
 const GoldTransaction = require('../models/goldTransaction');
+const { JWT_SECRET } = require('../config'); // Replace with your own secret key
 
-router.get('/portfolio/:userId', async (req, res) => {
+// Middleware to verify JWT token
+const auth = (req, res, next) => {
+  const token = req.header('Authorization');
+  if (!token) return res.status(401).json({ message: 'Authentication failed: No token provided' });
+
   try {
-    const user = await User.findById(req.params.userId); //find by ID
-    const walletTransactions = await WalletTransaction.find({ userId: req.params.userId }); // if user found
-    const goldTransactions = await GoldTransaction.find({ userId: req.params.userId }); 
-//Additions and subtractions based on CREDIT and DEBIT
+    const decoded = jwt.verify(token, JWT_SECRET);
+    req.user = decoded.user;
+    next();
+  } catch (err) {
+    console.error(err);
+    res.status(401).json({ message: 'Authentication failed: Invalid token' });
+  }
+};
+
+router.get('/portfolio/:userId', auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.params.userId);
+    const walletTransactions = await WalletTransaction.find({ userId: req.params.userId });
+    const goldTransactions = await GoldTransaction.find({ userId: req.params.userId });
+
     const netFundAdded = walletTransactions.reduce((acc, curr) => {
       return curr.type === 'CREDIT' ? acc + curr.amount : acc - curr.amount;
     }, 0);
@@ -19,7 +36,7 @@ router.get('/portfolio/:userId', async (req, res) => {
     const netGoldPurchased = goldTransactions.reduce((acc, curr) => {
       return curr.type === 'CREDIT' ? acc + curr.quantity : acc - curr.quantity;
     }, 0);
-//Net calcuations & gain loss
+
     const netGoldAmount = netGoldPurchased * user.runningBalance.goldPrice;
 
     const netGrowthOrLoss = netFundAdded + netGoldAmount - currentFund;
@@ -30,12 +47,11 @@ router.get('/portfolio/:userId', async (req, res) => {
       netFundAdded,
       currentFund,
       netGrowthOrLoss,
-      gainOrLossPercentage
+      gainOrLossPercentage,
+      goldWeight: user.runningBalance.goldWeight
     });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Server Error' });
   }
 });
-
-module.exports = router;
